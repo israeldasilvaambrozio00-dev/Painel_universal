@@ -1,0 +1,837 @@
+-- VARATO ULTIMATE V3 - PHYSICS, HITBOX, SPEED GHOST, TOGGLE WALLS, TARGET, NO SHOT COLLISION & LOW MODE (PERSISTENT AUTOMATIC)
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    Camera = workspace.CurrentCamera
+end)
+
+local function GetSafeParent()
+    local success, parent = pcall(function()
+        return gethui() or game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui")
+    end)
+    return success and parent or LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local TargetGui = GetSafeParent()
+if TargetGui:FindFirstChild("Varato_Final_UI") then TargetGui.Varato_Final_UI:Destroy() end
+if TargetGui:FindFirstChild("MagneticBall") then TargetGui.MagneticBall:Destroy() end
+if TargetGui:FindFirstChild("GhostBall") then TargetGui.GhostBall:Destroy() end
+
+local sg = Instance.new("ScreenGui", TargetGui)
+sg.Name = "Varato_Final_UI"
+sg.IgnoreGuiInset = true
+
+local theme = {
+    bg = Color3.fromRGB(11, 13, 21),      
+    sideBg = Color3.fromRGB(15, 17, 26),  
+    neon = Color3.fromRGB(0, 255, 110),   
+    stroke = Color3.fromRGB(35, 38, 50),  
+    element = Color3.fromRGB(18, 20, 30), 
+    text = Color3.fromRGB(235, 235, 235), 
+    inactiveText = Color3.fromRGB(160, 165, 180),
+    tabSelected = Color3.fromRGB(25, 28, 40)
+}
+
+local Options = {
+    AimLegit = true,
+    AimRage = false,
+    TeamCheck = true,
+    EspEnabled = false,
+    EspName = false,
+    EspLine = false,
+    EspBox = false,
+    EspLife = false,
+    EspGun = false,
+    EspColor = Color3.fromRGB(0, 255, 110), 
+    RainbowEsp = false,
+    PlayerViewer = false,
+    MichaelJackson = false,
+    TelaParada = false,
+    Bypass = false,
+    SpinBot = false,
+    SpinVelocity = 45,
+    HeadHitbox = false,
+    HitboxSize = 1,
+    HitboxLegit = false,
+    MagneticEnabled = false,
+    MagneticActive = false,
+    GhostHack = false,
+    GhostActive = false,
+    Target = false,
+    NoShotCollision = false,
+    LowMode = false
+}
+
+local SavedOptions = {}
+local FOV_Radius = 150
+local CurrentAngle = 0
+local Visuals = {}
+local HitboxStats = {} 
+
+local GhostClone = nil
+local GhostAnchorPos = nil
+local OriginalWallTransparencies = {}
+local OriginalMapMaterials = {}
+
+-- Variável para gerenciar o filtro do Magnetic
+local MagneticTargetFilter = "Todos" -- Pode ser "Todos" ou um objeto Player específico
+
+local CenterCrosshair = Instance.new("Frame", sg)
+CenterCrosshair.Size = UDim2.new(0, 40, 0, 40)
+CenterCrosshair.Position = UDim2.new(0.5, -20, 0.5, -20)
+CenterCrosshair.BackgroundTransparency = 1
+CenterCrosshair.Visible = false
+
+local HorizontalLine = Instance.new("Frame", CenterCrosshair)
+HorizontalLine.Size = UDim2.new(1, 0, 0, 2)
+HorizontalLine.Position = UDim2.new(0, 0, 0.5, -1)
+HorizontalLine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+HorizontalLine.BackgroundTransparency = 0.5
+HorizontalLine.BorderSizePixel = 0
+
+local VerticalLine = Instance.new("Frame", CenterCrosshair)
+VerticalLine.Size = UDim2.new(0, 2, 1, 0)
+VerticalLine.Position = UDim2.new(0.5, -1, 0, 0)
+VerticalLine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+VerticalLine.BackgroundTransparency = 0.5
+VerticalLine.BorderSizePixel = 0
+
+local TopToggle = Instance.new("TextButton", sg)
+TopToggle.Size = UDim2.new(0, 200, 0, 40)
+TopToggle.Position = UDim2.new(0.5, -100, 0, 0)
+TopToggle.BackgroundTransparency = 1
+TopToggle.Text = ""
+
+local Main = Instance.new("Frame", sg)
+Main.Size = UDim2.new(0, 450, 0, 280) 
+Main.Position = UDim2.new(0.5, -225, 0.5, -140)
+Main.BackgroundColor3 = theme.bg
+Main.BorderSizePixel = 0
+local MainCorner = Instance.new("UICorner", Main)
+MainCorner.CornerRadius = UDim.new(0, 10)
+local MainStroke = Instance.new("UIStroke", Main)
+MainStroke.Color = theme.stroke
+MainStroke.Thickness = 1
+
+TopToggle.MouseButton1Click:Connect(function()
+    Main.Visible = not Main.Visible
+end)
+
+local PVLabel = Instance.new("TextLabel", sg)
+PVLabel.Size = UDim2.new(0, 200, 0, 30)
+PVLabel.Position = UDim2.new(0.5, -100, 0, 50)
+PVLabel.BackgroundTransparency = 1
+PVLabel.TextColor3 = Color3.new(1, 1, 1)
+PVLabel.Font = Enum.Font.GothamBold
+PVLabel.TextSize = 16
+PVLabel.Visible = false
+
+local function ClearESP(p)
+    if Visuals[p] then
+        for _, obj in pairs(Visuals[p]) do 
+            if typeof(obj) == "Instance" then obj:Destroy() end 
+        end
+        Visuals[p] = nil
+    end
+    HitboxStats[p] = nil
+end
+
+local function ApplyCorner(obj, res)
+    local c = Instance.new("UICorner", obj)
+    c.CornerRadius = UDim.new(0, res or 6)
+end
+
+local function ApplyStroke(obj, color, thick, trans)
+    local s = Instance.new("UIStroke", obj)
+    s.Color = color or theme.stroke
+    s.Thickness = thick or 1
+    s.Transparency = trans or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    return s
+end
+
+local function MakeDraggable(obj)
+    local dragging, dragStart, startPos
+    obj.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true dragStart = i.Position startPos = obj.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local delta = i.Position - dragStart
+            obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i) dragging = false end)
+end
+
+local MagBtn = Instance.new("TextButton", sg)
+MagBtn.Name = "MagneticBall"
+MagBtn.Size = UDim2.new(0, 50, 0, 50)
+MagBtn.Position = UDim2.new(0.8, 0, 0.5, 0)
+MagBtn.BackgroundColor3 = theme.bg
+MagBtn.Text = "MAG"
+MagBtn.TextColor3 = theme.neon
+MagBtn.Font = Enum.Font.GothamBold
+MagBtn.TextSize = 12
+MagBtn.Visible = false
+ApplyCorner(MagBtn, 25)
+ApplyStroke(MagBtn, theme.neon, 2)
+MakeDraggable(MagBtn)
+
+MagBtn.MouseButton1Click:Connect(function()
+    if Options.Bypass then return end
+    Options.MagneticActive = not Options.MagneticActive
+    MagBtn.BackgroundColor3 = Options.MagneticActive and theme.neon or theme.bg
+    MagBtn.TextColor3 = Options.MagneticActive and theme.bg or theme.neon
+end)
+
+local GhoBtn = Instance.new("TextButton", sg)
+GhoBtn.Name = "GhostBall"
+GhoBtn.Size = UDim2.new(0, 50, 0, 50)
+GhoBtn.Position = UDim2.new(0.8, 0, 0.6, 0) 
+GhoBtn.BackgroundColor3 = theme.bg
+GhoBtn.Text = "GHO"
+GhoBtn.TextColor3 = theme.neon
+GhoBtn.Font = Enum.Font.GothamBold
+GhoBtn.TextSize = 12
+GhoBtn.Visible = false
+ApplyCorner(GhoBtn, 25)
+ApplyStroke(GhoBtn, theme.neon, 2)
+MakeDraggable(GhoBtn)
+
+local function ProcessObjectLowMode(obj, enabled)
+    if enabled then
+        if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character) and not obj:FindFirstChildOfClass("Humanoid") then
+            if not OriginalMapMaterials[obj] then
+                OriginalMapMaterials[obj] = {Material = obj.Material}
+            end
+            obj.Material = Enum.Material.SmoothPlastic
+        elseif obj:IsA("Texture") or obj:IsA("Decal") then
+            if not OriginalMapMaterials[obj] then
+                OriginalMapMaterials[obj] = {Transparency = obj.Transparency}
+            end
+            obj.Transparency = 1
+        end
+    else
+        local data = OriginalMapMaterials[obj]
+        if data then
+            if obj:IsA("BasePart") then
+                obj.Material = data.Material
+            elseif obj:IsA("Texture") or obj:IsA("Decal") then
+                obj.Transparency = data.Transparency
+            end
+        end
+    end
+end
+
+local function ToggleLowMode(enabled)
+    if enabled then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            ProcessObjectLowMode(obj, true)
+        end
+    else
+        for obj, _ in pairs(OriginalMapMaterials) do
+            if obj.Parent then
+                ProcessObjectLowMode(obj, false)
+            end
+        end
+        OriginalMapMaterials = {}
+    end
+end
+
+workspace.DescendantAdded:Connect(function(descendant)
+    if Options.LowMode and not Options.Bypass then
+        task.wait()
+        if descendant.Parent then
+            ProcessObjectLowMode(descendant, true)
+        end
+    end
+end)
+
+local function ToggleWallTransparency(enabled)
+    if enabled then
+        OriginalWallTransparencies = {}
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character) and not obj:FindFirstChildOfClass("Humanoid") then
+                if not obj.Name:lower():find("baseplate") then
+                    OriginalWallTransparencies[obj] = obj.Transparency
+                    obj.Transparency = 0.60 
+                end
+            end
+        end
+    else
+        for obj, transparency in pairs(OriginalWallTransparencies) do
+            if obj.Parent and obj:IsA("BasePart") then
+                obj.Transparency = transparency
+            end
+        end
+        OriginalWallTransparencies = {}
+    end
+end
+
+local function SetGhostState(enabled)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    
+    if enabled then
+        if hrp and char:FindFirstChildOfClass("Humanoid") then
+            char.Archivable = true
+            GhostAnchorPos = hrp.CFrame
+            
+            GhostClone = char:Clone()
+            GhostClone.Name = "Ghost_Visual"
+            
+            for _, child in pairs(GhostClone:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 0.7 
+                    child.CanCollide = false
+                end
+            end
+            
+            GhostClone.Parent = workspace
+            char.Archivable = false
+            ToggleWallTransparency(true)
+        end
+    else
+        ToggleWallTransparency(false)
+        if GhostClone and GhostClone:FindFirstChild("HumanoidRootPart") and hrp then
+            hrp.CFrame = GhostClone.HumanoidRootPart.CFrame
+        end
+        if GhostClone then
+            GhostClone:Destroy()
+            GhostClone = nil
+        end
+        GhostAnchorPos = nil
+        
+        if char and char:FindFirstChildOfClass("Humanoid") then
+            Camera.CameraSubject = char:FindFirstChildOfClass("Humanoid")
+        end
+    end
+end
+
+GhoBtn.MouseButton1Click:Connect(function()
+    if Options.Bypass or not Options.GhostHack then return end
+    Options.GhostActive = not Options.GhostActive
+    GhoBtn.BackgroundColor3 = Options.GhostActive and theme.neon or theme.bg
+    GhoBtn.TextColor3 = Options.GhostActive and theme.bg or theme.neon
+    SetGhostState(Options.GhostActive)
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Options.GhostHack and Options.GhostActive and GhostClone then
+        local cloneHum = GhostClone:FindFirstChildOfClass("Humanoid")
+        if cloneHum then
+            cloneHum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+local Sidebar = Instance.new("Frame", Main)
+Sidebar.Size = UDim2.new(0, 150, 1, -20)
+Sidebar.Position = UDim2.new(0, 10, 0, 10)
+Sidebar.BackgroundColor3 = theme.sideBg
+Sidebar.BackgroundTransparency = 0.5
+ApplyCorner(Sidebar, 8)
+ApplyStroke(Sidebar, theme.stroke, 1, 0.5)
+
+local Title = Instance.new("TextLabel", Sidebar)
+Title.Size = UDim2.new(1, -20, 0, 40)
+Title.Position = UDim2.new(0, 10, 0, 5)
+Title.RichText = true
+Title.Text = "<font color='#00FF6E'>FEA</font>TURES"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 22
+Title.TextColor3 = Color3.new(1,1,1)
+Title.BackgroundTransparency = 1
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+local TabContainer = Instance.new("Frame", Sidebar)
+TabContainer.Size = UDim2.new(1, -10, 1, -60)
+TabContainer.Position = UDim2.new(0, 5, 0, 50)
+TabContainer.BackgroundTransparency = 1
+local TabList = Instance.new("UIListLayout", TabContainer)
+TabList.Padding = UDim.new(0, 5)
+
+local Pages = {}
+local TabButtons = {}
+local Toggles = {}
+
+local function NewToggle(parent, txt, optName, default)
+    Options[optName] = default or false
+    local row = Instance.new("TextButton", parent)
+    row.Size = UDim2.new(1, 0, 0, 25)
+    row.BackgroundTransparency = 1
+    row.Text = ""
+    local box = Instance.new("Frame", row)
+    box.Size = UDim2.new(0, 20, 0, 20)
+    box.Position = UDim2.new(0, 0, 0.5, -10)
+    box.BackgroundColor3 = theme.element
+    ApplyCorner(box, 4)
+    local s = ApplyStroke(box, Options[optName] and theme.neon or theme.stroke)
+    local check = Instance.new("TextLabel", box)
+    check.Size = UDim2.new(1, 0, 1, 0)
+    check.Text = "✔"
+    check.TextColor3 = theme.neon
+    check.TextSize = 14
+    check.BackgroundTransparency = 1
+    check.Visible = Options[optName]
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1, -30, 1, 0)
+    lbl.Position = UDim2.new(0, 30, 0, 0)
+    lbl.Text = txt
+    lbl.TextColor3 = theme.text
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 15
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.BackgroundTransparency = 1
+
+    local function updateVisual()
+        check.Visible = Options[optName]
+        s.Color = Options[optName] and theme.neon or theme.stroke
+        if optName == "MagneticEnabled" then MagBtn.Visible = Options.MagneticEnabled and not Options.Bypass end
+        if optName == "Target" then CenterCrosshair.Visible = Options.Target and not Options.Bypass end
+        if optName == "GhostHack" then 
+            GhoBtn.Visible = Options.GhostHack and not Options.Bypass 
+            if not Options.GhostHack and Options.GhostActive then
+                Options.GhostActive = false
+                GhoBtn.BackgroundColor3 = theme.bg
+                GhoBtn.TextColor3 = theme.neon
+                SetGhostState(false)
+            end
+        end
+        if optName == "LowMode" then
+            ToggleLowMode(Options.LowMode)
+        end
+    end
+    Toggles[optName] = updateVisual
+
+    row.MouseButton1Click:Connect(function()
+        if optName ~= "Bypass" and Options.Bypass then return end
+        Options[optName] = not Options[optName]
+        if optName == "Bypass" then
+            if Options.Bypass then
+                for k, v in pairs(Options) do
+                    if k ~= "Bypass" and type(v) == "boolean" then
+                        SavedOptions[k] = v
+                        Options[k] = false
+                    end
+                end
+                SetGhostState(false)
+                ToggleLowMode(false)
+                Options.GhostActive = false
+            else
+                for k, v in pairs(SavedOptions) do Options[k] = v end
+            end
+            for _, update in pairs(Toggles) do update() end
+            MagBtn.BackgroundColor3 = Options.MagneticActive and theme.neon or theme.bg
+            MagBtn.TextColor3 = Options.MagneticActive and theme.bg or theme.neon
+            GhoBtn.BackgroundColor3 = Options.GhostActive and theme.neon or theme.bg
+            GhoBtn.TextColor3 = Options.GhostActive and theme.bg or theme.neon
+        else
+            if optName == "AimLegit" and Options.AimLegit then
+                Options.AimRage = false; if Toggles["AimRage"] then Toggles["AimRage"]() end
+            elseif optName == "AimRage" and Options.AimRage then
+                Options.AimLegit = false; if Toggles["AimLegit"] then Toggles["AimLegit"]() end
+            end
+        end
+        updateVisual()
+    end)
+end
+
+local function CreateTab(name, icon, isDefault)
+    local tBtn = Instance.new("TextButton", TabContainer)
+    tBtn.Size = UDim2.new(1, 0, 0, 35)
+    tBtn.BackgroundColor3 = theme.tabSelected
+    tBtn.Text = ""
+    ApplyCorner(tBtn, 6)
+    local tStroke = ApplyStroke(tBtn, theme.stroke, 1, 0.6)
+    local txt = Instance.new("TextLabel", tBtn)
+    txt.Size = UDim2.new(1, -10, 1, 0)
+    txt.Position = UDim2.new(0, 10, 0, 0)
+    txt.Text = icon .. "  " .. name
+    txt.Font = Enum.Font.GothamMedium
+    txt.TextColor3 = theme.inactiveText
+    txt.TextSize = 14
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.BackgroundTransparency = 1
+    local Page = Instance.new("Frame", Main)
+    Page.Size = UDim2.new(1, -175, 1, -20)
+    Page.Position = UDim2.new(0, 165, 0, 10)
+    Page.BackgroundTransparency = 1
+    Page.Visible = false
+    local PageList = Instance.new("UIListLayout", Page)
+    PageList.Padding = UDim.new(0, 8)
+    local function Select()
+        for _, p in pairs(Pages) do p.Visible = false end
+        for _, b in pairs(TabButtons) do 
+            b.Btn.BackgroundTransparency = 0.8
+            b.Stroke.Color = theme.stroke
+            b.Txt.TextColor3 = theme.inactiveText
+        end
+        Page.Visible = true
+        tBtn.BackgroundTransparency = 0
+        tStroke.Color = theme.neon
+        txt.TextColor3 = Color3.new(1,1,1)
+    end
+    tBtn.MouseButton1Click:Connect(Select)
+    table.insert(Pages, Page)
+    table.insert(TabButtons, {Btn = tBtn, Stroke = tStroke, Txt = txt})
+    if isDefault then Select() end
+    return Page
+end
+
+local AimbotPage = CreateTab("Aimbot", "🎯", true)
+NewToggle(AimbotPage, "Aim Legit", "AimLegit", true)
+NewToggle(AimbotPage, "Aim Rage", "AimRage", false)
+NewToggle(AimbotPage, "Team check", "TeamCheck", true)
+
+local VisualPage = CreateTab("Visual", "👁️", false)
+NewToggle(VisualPage, "Enable Master", "EspEnabled", false)
+NewToggle(VisualPage, "Esp Box", "EspBox", false)
+NewToggle(VisualPage, "Esp Line", "EspLine", false)
+NewToggle(VisualPage, "Esp Life", "EspLife", false)
+NewToggle(VisualPage, "Esp Gun", "EspGun", false)
+NewToggle(VisualPage, "Esp Infor", "EspName", false)
+
+local ExploitPage = CreateTab("Exploits", "💣", false)
+NewToggle(ExploitPage, "Pleyer viewr", "PlayerViewer", false)
+NewToggle(ExploitPage, "Michael Jackson", "MichaelJackson", false)
+NewToggle(ExploitPage, "Tela Parada", "TelaParada", false)
+NewToggle(ExploitPage, "Ghost hack", "GhostHack", false) 
+NewToggle(ExploitPage, "Target", "Target", false)
+NewToggle(ExploitPage, "No shot collision", "NoShotCollision", false)
+NewToggle(ExploitPage, "Low mode", "LowMode", false)
+NewToggle(ExploitPage, "Bypass", "Bypass", false)
+
+local RagePage = CreateTab("Rage", "💀", false)
+NewToggle(RagePage, "Spin bot", "SpinBot", false)
+local SpinSpeedBtn = Instance.new("TextButton", RagePage)
+SpinSpeedBtn.Size = UDim2.new(1, 0, 0, 25); SpinSpeedBtn.BackgroundColor3 = theme.element; SpinSpeedBtn.Text = "Velocidade Giro: " .. Options.SpinVelocity; SpinSpeedBtn.Font = Enum.Font.Gotham; SpinSpeedBtn.TextColor3 = theme.text; SpinSpeedBtn.TextSize = 14; ApplyCorner(SpinSpeedBtn, 6); ApplyStroke(SpinSpeedBtn, theme.stroke)
+SpinSpeedBtn.MouseButton1Click:Connect(function()
+    if Options.Bypass then return end; Options.SpinVelocity = Options.SpinVelocity >= 150 and 25 or Options.SpinVelocity + 25; SpinSpeedBtn.Text = "Velocidade Giro: " .. Options.SpinVelocity
+end)
+NewToggle(RagePage, "Head hit box", "HeadHitbox", false)
+local HbSizeBtn = Instance.new("TextButton", RagePage)
+HbSizeBtn.Size = UDim2.new(1, 0, 0, 25); HbSizeBtn.BackgroundColor3 = theme.element; HbSizeBtn.Text = "Tamanho Hitbox: " .. Options.HitboxSize; HbSizeBtn.Font = Enum.Font.Gotham; HbSizeBtn.TextColor3 = theme.text; HbSizeBtn.TextSize = 14; ApplyCorner(HbSizeBtn, 6); ApplyStroke(HbSizeBtn, theme.stroke)
+HbSizeBtn.MouseButton1Click:Connect(function()
+    if Options.Bypass then return end; Options.HitboxSize = Options.HitboxSize >= 12 and 1 or Options.HitboxSize + 1; HbSizeBtn.Text = "Tamanho Hitbox: " .. Options.HitboxSize
+end)
+NewToggle(RagePage, "Hitbox legit", "HitboxLegit", false)
+NewToggle(RagePage, "Magnetic", "MagneticEnabled", false)
+
+-- BOTÃO DE SELEÇÃO DE JOGADOR (INJETADO DIRETAMENTE ABAIXO DO MAGNETIC SEM ALTERAR O DESIGN DA PÁGINA)
+local MagFilterBtn = Instance.new("TextButton", RagePage)
+MagFilterBtn.Size = UDim2.new(1, 0, 0, 25)
+MagFilterBtn.BackgroundColor3 = theme.element
+MagFilterBtn.Text = "Puxar: Todos"
+MagFilterBtn.Font = Enum.Font.Gotham
+MagFilterBtn.TextColor3 = theme.text
+MagFilterBtn.TextSize = 13
+ApplyCorner(MagFilterBtn, 6)
+ApplyStroke(MagFilterBtn, theme.stroke)
+
+MagFilterBtn.MouseButton1Click:Connect(function()
+    if Options.Bypass then return end
+    local allPlayers = Players:GetPlayers()
+    local eligible = {}
+    
+    for _, p in pairs(allPlayers) do
+        if p ~= LocalPlayer then
+            table.insert(eligible, p)
+        end
+    end
+    
+    if #eligible == 0 then
+        MagneticTargetFilter = "Todos"
+        MagFilterBtn.Text = "Puxar: Todos"
+        return
+    end
+    
+    if MagneticTargetFilter == "Todos" then
+        MagneticTargetFilter = eligible[1]
+    else
+        local currentIndex = 0
+        for i, p in pairs(eligible) do
+            if p == MagneticTargetFilter then
+                currentIndex = i
+                break
+            end
+        end
+        
+        if currentIndex == 0 or currentIndex >= #eligible then
+            MagneticTargetFilter = "Todos"
+        else
+            MagneticTargetFilter = eligible[currentIndex + 1]
+        end
+    end
+    
+    if MagneticTargetFilter == "Todos" then
+        MagFilterBtn.Text = "Puxar: Todos"
+    else
+        MagFilterBtn.Text = "Puxar: " .. MagneticTargetFilter.Name
+    end
+end)
+
+local InfoPage = CreateTab("Info", "🆔", false)
+local InfoLabel = Instance.new("TextLabel", InfoPage); InfoLabel.Size = UDim2.new(1, 0, 1, 0); InfoLabel.BackgroundTransparency = 1; InfoLabel.TextColor3 = theme.text; InfoLabel.Font = Enum.Font.GothamMedium; InfoLabel.TextSize = 14; InfoLabel.RichText = true; InfoLabel.Text = "<font color='#00FF6E'>Painel mobile</font>\nFeito por jhonatham_ofc"; InfoLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+local MetaTable = getrawmetatable(game)
+local OldIndex = MetaTable.__index
+setreadonly(MetaTable, false)
+
+local OptRayParams = RaycastParams.new()
+OptRayParams.FilterType = Enum.RaycastFilterType.Include
+
+MetaTable.__index = newcclosure(function(self, key)
+    if self == Mouse and (key == "Hit" or key == "Target") and (Options.Target or Options.NoShotCollision) and not Options.Bypass then
+        local ScreenCenterRay = Camera:ViewportPointToRay(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        local RaycastResult = nil
+        
+        if Options.NoShotCollision then
+            local TargetsList = {}
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p.Character then
+                    table.insert(TargetsList, p.Character)
+                end
+            end
+            OptRayParams.FilterDescendantsInstances = TargetsList
+            RaycastResult = workspace:Raycast(ScreenCenterRay.Origin, ScreenCenterRay.Direction * 1000, OptRayParams)
+        else
+            RaycastResult = workspace:Raycast(ScreenCenterRay.Origin, ScreenCenterRay.Direction * 1000)
+        end
+        
+        if key == "Hit" then
+            if RaycastResult then
+                return CFrame.new(RaycastResult.Position)
+            else
+                return CFrame.new(ScreenCenterRay.Origin + ScreenCenterRay.Direction * 1000)
+            end
+        elseif key == "Target" then
+            return RaycastResult and RaycastResult.Instance or nil
+        end
+    end
+    return OldIndex(self, key)
+end)
+
+setreadonly(MetaTable, true)
+
+local function IsPlayerVisible(part, character)
+    local castPoints = {Camera.CFrame.Position, part.Position}
+    local ignoreList = {LocalPlayer.Character, character, Camera}
+    local rayParams = RaycastParams.new(); rayParams.FilterType = Enum.RaycastFilterType.Exclude; rayParams.FilterDescendantsInstances = ignoreList; rayParams.IgnoreWater = true
+    local ray = workspace:Raycast(castPoints[1], (castPoints[2] - castPoints[1]).Unit * (castPoints[2] - castPoints[1]).Magnitude, rayParams)
+    return ray == nil
+end
+
+local function GetAimbotTarget()
+    if Options.Bypass then return nil end
+    local target, minMag = nil, FOV_Radius
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+            if Options.TeamCheck and p.Team == LocalPlayer.Team then continue end
+            if p.Character:FindFirstChildOfClass("ForceField") then continue end
+            local aimPart = p.Character:FindFirstChild("Head")
+            if Options.AimLegit and p.Character.Humanoid.Health >= 45 then aimPart = p.Character:FindFirstChild("UpperTorso") or p.Character:FindFirstChild("Torso") end
+            if aimPart and IsPlayerVisible(aimPart, p.Character) then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(aimPart.Position)
+                if onScreen then
+                    local mag = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+                    if mag < minMag then minMag = mag; target = p end
+                end
+            end
+        end
+    end
+    return target
+end
+
+local function SetupHitboxListener(p)
+    if p == LocalPlayer then return end
+    local function listen(char)
+        if not char then return end
+        local hum = char:WaitForChild("Humanoid", 5)
+        if not HitboxStats[p] then HitboxStats[p] = { Hits = 0, Mode = "Body" } end
+        local stats = HitboxStats[p]
+        local lastHealth = hum and hum.Health or 100
+        if hum then
+            hum.HealthChanged:Connect(function(currentHealth)
+                if not Options.HitboxLegit or Options.Bypass then lastHealth = currentHealth return end
+                if currentHealth < lastHealth then
+                    stats.Hits = stats.Hits + 1
+                    if stats.Mode == "Body" and stats.Hits >= 3 then
+                        stats.Mode = "Head"; stats.Hits = 0
+                    elseif stats.Mode == "Head" and stats.Hits >= 1 then
+                        stats.Mode = "Body"; stats.Hits = 0
+                    end
+                end
+                lastHealth = currentHealth
+            end)
+        end
+    end
+    if p.Character then task.spawn(listen, p.Character) end
+    p.CharacterAdded:Connect(function(char) task.spawn(listen, char) end)
+end
+
+for _, p in pairs(Players:GetPlayers()) do SetupHitboxListener(p) end
+Players.PlayerAdded:Connect(SetupHitboxListener)
+
+RunService.RenderStepped:Connect(function()
+    if Options.Bypass then PVLabel.Visible = false; CenterCrosshair.Visible = false; for _, p in pairs(Players:GetPlayers()) do ClearESP(p) end return end
+    
+    local CurrentBaseColor = Options.EspColor
+
+    local character = LocalPlayer.Character
+    local hum = character and character:FindFirstChildOfClass("Humanoid")
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+
+    if Options.GhostHack and Options.GhostActive and hrp and GhostAnchorPos and GhostClone then
+        hrp.CFrame = GhostAnchorPos
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        
+        local cloneHrp = GhostClone:FindFirstChild("HumanoidRootPart")
+        local cloneHum = GhostClone:FindFirstChildOfClass("Humanoid")
+        if cloneHrp and cloneHum and hum then
+            Camera.CameraSubject = cloneHum
+            
+            local rainbowColor = Color3.fromHSV(tick() % 2 / 2, 1, 1)
+            for _, child in pairs(GhostClone:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    child.Transparency = 0.7 
+                    child.Color = rainbowColor
+                    child.Material = Enum.Material.Neon 
+                end
+            end
+            
+            local moveDir = hum.MoveDirection
+            cloneHrp.CFrame = cloneHrp.CFrame + (moveDir * (hum.WalkSpeed * 0.055))
+            if moveDir.Magnitude > 0 then
+                local targetAngle = math.atan2(-moveDir.X, -moveDir.Z)
+                cloneHrp.CFrame = CFrame.new(cloneHrp.Position) * CFrame.Angles(0, targetAngle, 0)
+            end
+        end
+    end
+
+    if Options.TelaParada and hum and hrp and not (Options.GhostHack and Options.GhostActive) then
+        hum.AutoRotate = false
+        if Options.Bypass == false then hum.WalkSpeed = 22 end
+        if hum.MoveDirection.Magnitude > 0 then
+            local moveDir = hum.MoveDirection
+            local targetAngle = math.atan2(-moveDir.X, -moveDir.Z)
+            hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, targetAngle, 0)
+        end
+    elseif hum and not Options.SpinBot and not Options.MichaelJackson and not (Options.GhostHack and Options.GhostActive) then
+        hum.AutoRotate = true
+    end
+
+    if Options.MichaelJackson and hrp and not (Options.GhostHack and Options.GhostActive) then
+        hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(180), 0)
+    end
+
+    if Options.PlayerViewer then
+        local count = 0; local myPos = hrp and hrp.Position
+        if myPos then for _, p in pairs(Players:GetPlayers()) do if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then if (myPos - p.Character.HumanoidRootPart.Position).Magnitude <= 500 then count = count + 1 end end end end
+        PVLabel.Text = "Pleyers: " .. count; PVLabel.Visible = true
+    else PVLabel.Visible = false end
+
+    if Options.SpinBot and hrp and not (Options.GhostHack and Options.GhostActive) then
+        CurrentAngle = (CurrentAngle + Options.SpinVelocity) % 360; hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, math.rad(CurrentAngle), 0)
+    end
+    
+    if Options.AimLegit or Options.AimRage then
+        local target = GetAimbotTarget()
+        if target and target.Character then
+            local targetHum = target.Character:FindFirstChild("Humanoid"); local targetPart = (Options.AimRage or (targetHum and targetHum.Health < targetHum.MaxHealth * 0.45)) and target.Character:FindFirstChild("Head") or (target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso"))
+            if targetPart then Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, targetPart.Position), Options.AimRage and 0.8 or 0.25) end
+        end
+    end
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local pchar = p.Character; local phrp = pchar and pchar:FindFirstChild("HumanoidRootPart"); local phum = pchar and pchar:FindFirstChildOfClass("Humanoid"); local phead = pchar and pchar:FindFirstChild("Head")
+            local ptorso = pchar and (pchar:FindFirstChild("UpperTorso") or pchar:FindFirstChild("Torso"))
+            
+            if pchar and phrp and phum and phum.Health > 0 and phead then
+                -- LÓGICA FILTRADA DO MAGNETIC: SÓ EXECUTA SE FOR "Todos" OU SE FOR O JOGADOR SELECIONADO ESPECIFICAMENTE
+                local isAllowedByFilter = (MagneticTargetFilter == "Todos") or (MagneticTargetFilter == p)
+
+                if Options.HitboxLegit and not Options.MagneticActive then
+                    if not HitboxStats[p] then HitboxStats[p] = { Hits = 0, Mode = "Body" } end
+                    local stats = HitboxStats[p]
+                    if stats.Mode == "Body" and ptorso then
+                        ptorso.Massless = true; ptorso.CanCollide = false; ptorso.Size = Vector3.new(13, 13, 13); ptorso.Transparency = 0.5
+                        if phead.Size ~= Vector3.new(1,1,1) then phead.Massless = false; phead.CanCollide = true; phead.Size = Vector3.new(1,1,1); phead.Transparency = 0 end
+                    elseif stats.Mode == "Head" and ptorso then
+                        phead.Massless = true; phead.CanCollide = false; phead.Size = Vector3.new(10, 10, 10); phead.Transparency = 0.5
+                        if ptorso.Size.X > 5 then ptorso.Massless = false; ptorso.CanCollide = true; ptorso.Size = ptorso.Name == "UpperTorso" and Vector3.new(2, 0.4, 1) or Vector3.new(2, 2, 1); ptorso.Transparency = 0 end
+                    end
+                elseif Options.MagneticEnabled and Options.MagneticActive and isAllowedByFilter and not pchar:FindFirstChildOfClass("ForceField") then
+                    if (not Options.TeamCheck or p.Team ~= LocalPlayer.Team) then
+                        phead.Massless = true; phead.CanCollide = false; phead.Size = Vector3.new(10, 10, 10); phead.Transparency = 0.5
+                        phead.AssemblyLinearVelocity = Vector3.zero; phead.AssemblyAngularVelocity = Vector3.zero
+                        if phrp then
+                            local TargetPosition = Camera.CFrame.Position + (Camera.CFrame.LookVector * 25)
+                            phrp.CFrame = CFrame.new(TargetPosition)
+                        end
+                    end
+                elseif Options.HeadHitbox then
+                    phead.Massless = true; phead.CanCollide = false; phead.Size = Vector3.new(Options.HitboxSize, Options.HitboxSize, Options.HitboxSize); phead.Transparency = 0.5
+                    phead.AssemblyLinearVelocity = Vector3.zero; phead.AssemblyAngularVelocity = Vector3.zero
+                else
+                    if phead.Size ~= Vector3.new(1, 1, 1) then phead.Massless = false; phead.CanCollide = true; phead.Size = Vector3.new(1, 1, 1); phead.Transparency = 0 end
+                    if ptorso and ptorso.Size.X > 5 then ptorso.Massless = false; ptorso.CanCollide = true; ptorso.Size = ptorso.Name == "UpperTorso" and Vector3.new(2, 0.4, 1) or Vector3.new(2, 2, 1); ptorso.Transparency = 0 end
+                end
+
+                if Options.EspEnabled then
+                    if Options.TeamCheck and p.Team == LocalPlayer.Team then if Visuals[p] then ClearESP(p) end continue end
+                    if not Visuals[p] then
+                        local l = Instance.new("Frame", sg); l.BorderSizePixel = 0; l.Visible = false; l.AnchorPoint = Vector2.new(0.5, 0.5)
+                        local b = Instance.new("Frame", sg); b.BackgroundTransparency = 1; b.BorderSizePixel = 0; b.Visible = false
+                        local st = Instance.new("UIStroke", b); st.Thickness = 1.5; st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                        local nt = Instance.new("TextLabel", sg); nt.BackgroundTransparency = 1; nt.Font = Enum.Font.GothamBold; nt.TextSize = 12; nt.Visible = false
+                        local hbg = Instance.new("Frame", sg); hbg.BackgroundColor3 = Color3.new(0,0,0); hbg.BorderSizePixel = 0; hbg.Visible = false
+                        local hbf = Instance.new("Frame", hbg); hbf.BorderSizePixel = 0; hbf.Size = UDim2.new(1,0,1,0)
+                        local gt = Instance.new("TextLabel", sg); gt.BackgroundTransparency = 1; gt.Font = Enum.Font.GothamBold; gt.TextSize = 10; gt.Visible = false
+                        Visuals[p] = {Line = l, Box = b, Stroke = st, NameTag = nt, HealthBg = hbg, HealthFill = hbf, GunTag = gt}
+                    end
+                    local v = Visuals[p]
+                    local isVisible = IsPlayerVisible(phead, pchar)
+                    local FinalEspColor = isVisible and CurrentBaseColor or Color3.fromRGB(255, 0, 0)
+                    
+                    v.Line.BackgroundColor3 = FinalEspColor; v.Stroke.Color = FinalEspColor; v.GunTag.TextColor3 = FinalEspColor; v.NameTag.TextColor3 = FinalEspColor
+                    local pos, onScreen = Camera:WorldToViewportPoint(phrp.Position)
+                    if onScreen then
+                        if Options.EspLine then
+                            local startX, startY = Camera.ViewportSize.X/2, 0; local dist = math.sqrt((pos.X-startX)^2+(pos.Y-startY)^2); v.Line.Size = UDim2.new(0, dist, 0, 1); v.Line.Position = UDim2.new(0, (startX+pos.X)/2, 0, (startY+pos.Y)/2); v.Line.Rotation = math.deg(math.atan2(pos.Y-startY, pos.X-startX)); v.Line.Visible = true
+                        else v.Line.Visible = false end
+                        local distance = (Camera.CFrame.Position - phrp.Position).Magnitude; local size = 1000 / distance; local bSize = Vector2.new(size * 1.2, size * 1.5)
+                        if Options.EspBox then v.Box.Size = UDim2.new(0, bSize.X, 0, bSize.Y); v.Box.Position = UDim2.new(0, pos.X - (bSize.X/2), 0, pos.Y - (bSize.Y/2)); v.Box.Visible = true else v.Box.Visible = false end
+                        if Options.EspLife and Options.EspBox then
+                            v.HealthBg.Visible = true; v.HealthBg.Size = UDim2.new(0, 4, 0, bSize.Y); v.HealthBg.Position = UDim2.new(0, v.Box.Position.X.Offset - 7, 0, v.Box.Position.Y.Offset); v.HealthFill.Size = UDim2.new(1, 0, phum.Health/phum.MaxHealth, 0); v.HealthFill.Position = UDim2.new(0, 0, 1 - (phum.Health/phum.MaxHealth), 0); v.HealthFill.BackgroundColor3 = Color3.new(1,0,0):Lerp(Color3.new(0,1,0), phum.Health/phum.MaxHealth)
+                        else v.HealthBg.Visible = false end
+                        if Options.EspName then v.NameTag.Text = p.Name .. " [" .. math.floor(distance) .. "m]"; v.NameTag.Position = UDim2.new(0, pos.X, 0, (Options.EspBox and v.Box.Position.Y.Offset - 15 or pos.Y - 25)); v.NameTag.AnchorPoint = Vector2.new(0.5, 0.5); v.NameTag.Visible = true else v.NameTag.Visible = false end
+                        if Options.EspGun then local tool = pchar:FindFirstChildOfClass("Tool"); v.GunTag.Text = tool and "["..tool.Name.."]" or "[Hands]"; v.GunTag.Position = UDim2.new(0, pos.X, 0, (Options.EspBox and v.Box.Position.Y.Offset + bSize.Y + 5 or pos.Y + 25)); v.GunTag.AnchorPoint = Vector2.new(0.5, 0); v.GunTag.Visible = true else v.GunTag.Visible = false end
+                    else v.Line.Visible = false; v.Box.Visible = false; v.NameTag.Visible = false; v.HealthBg.Visible = false; v.GunTag.Visible = false end
+                else if Visuals[p] then ClearESP(p) end end
+            else if Visuals[p] then ClearESP(p) end end
+        end
+    end
+end)
+
+-- Segurança: Se o jogador que estava selecionado sair do servidor, o filtro volta automaticamente para "Todos"
+Players.PlayerRemoving:Connect(function(p)
+    if MagneticTargetFilter == p then
+        MagneticTargetFilter = "Todos"
+        MagFilterBtn.Text = "Puxar: Todos"
+    end
+    ClearESP(p)
+end)
+
+MakeDraggable(Main)
+
